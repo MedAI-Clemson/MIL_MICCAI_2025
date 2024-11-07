@@ -1,0 +1,12 @@
+channels:
+  - pytorch
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.8
+  - pytorch
+  - torchvision
+  - pandas
+  - pillow
+  - numpy
+  - conda>=24.7.1

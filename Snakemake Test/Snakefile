@@ -1,0 +1,38 @@
+# Snakefile
+configfile: "config.yaml"
+
+N_SPLITS = 10
+
+rule all:
+    input:
+        "results/cv_splits.pkl",
+        expand("results/train_dataset_split_{split}.csv", split=range(1, N_SPLITS + 1)),
+        expand("results/test_dataset_split_{split}.csv", split=range(1, N_SPLITS + 1)),
+        expand("results/train_dataset_split_{split}.pt", split=range(1, N_SPLITS + 1)),
+        expand("results/test_dataset_split_{split}.pt", split=range(1, N_SPLITS + 1)),
+        expand("results/train_loader_split_{split}.pt", split=range(1, N_SPLITS + 1)),
+        expand("results/test_loader_split_{split}.pt", split=range(1, N_SPLITS + 1))
+
+rule prepare_splits:
+    input:
+        targets="data/model_targets.csv",
+        images="data/model_images.csv"
+    output:
+        splits="results/cv_splits.pkl"
+    script:
+        "scripts/prepare_splits.py"
+
+rule create_dataset:
+    input:
+        targets="data/model_targets.csv",
+        images="data/model_images.csv",
+        splits="results/cv_splits.pkl"
+    output:
+        train_datasets_csv=expand("results/train_dataset_split_{split}.csv", split=range(1, N_SPLITS + 1)),
+        test_datasets_csv=expand("results/test_dataset_split_{split}.csv", split=range(1, N_SPLITS + 1)),
+        train_datasets_pt=expand("results/train_dataset_split_{split}.pt", split=range(1, N_SPLITS + 1)),
+        test_datasets_pt=expand("results/test_dataset_split_{split}.pt", split=range(1, N_SPLITS + 1)),
+        train_loaders=expand("results/train_loader_split_{split}.pt", split=range(1, N_SPLITS + 1)),
+        test_loaders=expand("results/test_loader_split_{split}.pt", split=range(1, N_SPLITS + 1))
+    script:
+        "scripts/create_dataset.py"
