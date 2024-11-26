@@ -1,0 +1,22 @@
+# Snakefile
+
+rule all:
+    input:
+        "config.yaml"
+
+rule train:
+    input:
+        config="config.yaml"
+    output:
+        metrics="results/metrics.csv",
+        model="results/model.ckpt"
+    script:
+        "achilles_train.py"
+
+rule plot:
+    input:
+        metrics="results/metrics.csv"
+    output:
+        plots="results/metrics.png"
+    script:
+        "plot_metrics.py"
