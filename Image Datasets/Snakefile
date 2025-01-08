@@ -1,0 +1,61 @@
+# Snakefile
+
+N_SPLITS = 10
+DATASETS = ["achilles","xray","mri"]
+
+rule all:
+    input:
+        expand("config/{dataset}_pt_config.yaml", dataset=DATASETS),
+        expand("config/{dataset}_config.yaml", dataset=DATASETS),
+        expand(["miccai/{dataset}/metrics_fold{split}.csv"], dataset=DATASETS, split=range(1, N_SPLITS + 1)),
+        expand(["miccai/{dataset}/model_fold{split}.ckpt"], dataset=DATASETS, split=range(1, N_SPLITS + 1)),
+        expand(["miccai/{dataset}/metrics_fold{split}.png"], dataset=DATASETS, split=range(1, N_SPLITS + 1)),
+        expand("miccai/{dataset}/metrics.png", dataset=DATASETS),
+
+rule pretrain:
+    input:
+        expand("config/{dataset}_pt_config.yaml", dataset=DATASETS),
+        expand("{dataset}_train.py", dataset=DATASETS),
+    output:
+        metrics=expand(["miccai/{dataset}/pretrain/metrics_fold{split}.csv"], dataset=DATASETS, split=range(1, N_SPLITS + 1)),
+        model=expand(["miccai/{dataset}/pretrain/model_fold{split}.ckpt"], dataset=DATASETS, split=range(1, N_SPLITS + 1)),
+    run:
+        commands=expand("python {dataset}_train.py --config config/{dataset}_pt_config.yaml", dataset=DATASETS)
+        for c in commands:
+            shell(c)
+
+rule train:
+    input:
+        expand("config/{dataset}_config.yaml", dataset=DATASETS),
+        expand("{dataset}_train.py", dataset=DATASETS),
+        metrics=expand(["miccai/{dataset}/pretrain/metrics_fold{split}.csv"], dataset=DATASETS, split=range(1, N_SPLITS + 1)),
+        model=expand(["miccai/{dataset}/pretrain/model_fold{split}.ckpt"], dataset=DATASETS, split=range(1, N_SPLITS + 1)),
+    output:
+        metrics=expand(["miccai/{dataset}/metrics_fold{split}.csv"], dataset=DATASETS, split=range(1, N_SPLITS + 1)),
+        model=expand(["miccai/{dataset}/model_fold{split}.ckpt"], dataset=DATASETS, split=range(1, N_SPLITS + 1)),
+    run:
+        commands=expand("python {dataset}_train.py --config config/{dataset}_config.yaml", dataset=DATASETS)
+        for c in commands:
+            shell(c)
+
+rule plot_folds:
+    input:
+        expand("config/{dataset}_config.yaml", dataset=DATASETS),
+        metrics=expand(["miccai/{dataset}/metrics_fold{split}.csv"], dataset=DATASETS, split=range(1, N_SPLITS + 1)),
+    output:
+        plots=expand(["miccai/{dataset}/metrics_fold{split}.png"], dataset=DATASETS, split=range(1, N_SPLITS + 1)),
+    run:
+        commands=expand("python plot_folds.py --config config/{dataset}_config.yaml", dataset=DATASETS)
+        for c in commands:
+            shell(c)
+        
+rule plot_metrics:
+    input:
+        expand("config/{dataset}_config.yaml", dataset=DATASETS),
+        metrics=expand(["miccai/{dataset}/metrics_fold{split}.csv"], dataset=DATASETS, split=range(1, N_SPLITS + 1)),
+    output:
+        plots=expand("miccai/{dataset}/metrics.png", dataset=DATASETS),
+    run:
+        commands=expand("python plot_metrics.py --config config/{dataset}_config.yaml", dataset=DATASETS)
+        for c in commands:
+            shell(c)
