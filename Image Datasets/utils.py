@@ -4,7 +4,7 @@ from torch.nn.utils.rnn import pad_sequence, pack_padded_sequence, pad_packed_se
 from torch.utils.data import default_collate
 
 def pad(h, num_imgs):
-    # reshape as batch of vids and pad
+    # reshape as batch of studies and pad
     start_ix = 0
     h_ls = []
     for n in num_imgs:

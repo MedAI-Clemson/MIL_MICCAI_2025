@@ -8,6 +8,7 @@ from tempfile import TemporaryDirectory
 import random
 import math
 import yaml
+from collections import OrderedDict
 
 import torch
 import torch.nn.functional as F
@@ -179,7 +180,7 @@ def compute_metrics_bin(y_true, y_pred):
     y_pred = 1/(1+np.exp(-y_pred)) #sigmoid to get probability 0-1
     y_pred_cls = np.rint(y_pred)
     
-    mets['roc_auc'] = skmet.roc_auc_score(y_true, y_pred, multi_class='ovr')
+    mets['roc_auc'] = skmet.roc_auc_score(y_true, y_pred)
     mets['conf_mat'] = skmet.confusion_matrix(y_true, y_pred_cls)
     mets['accuracy'] = skmet.accuracy_score(y_true, y_pred_cls)
     mets['precision'] = skmet.precision_score(y_true, y_pred_cls,zero_division=0)
@@ -187,6 +188,7 @@ def compute_metrics_bin(y_true, y_pred):
     mets['specificity'] = skmet.recall_score(y_true, y_pred_cls, pos_label=0,zero_division=0)
     mets['f1score'] = skmet.f1_score(y_true, y_pred_cls,zero_division=0)
     mets['y_pred'] = y_pred
+    mets['y_true'] = y_true
     
     return mets
 
@@ -204,6 +206,7 @@ def compute_metrics_multi(y_true, y_pred):
     #mets['specificity'] = skmet.recall_score(y_true, y_pred_cls, average='macro',zero_division=0)
     mets['f1score'] = skmet.f1_score(y_true, y_pred_cls, average='macro', zero_division=0)
     mets['y_pred'] = y_pred
+    mets['y_true'] = y_true
     
     return mets
 
@@ -231,22 +234,23 @@ def main(cfg):
             model = model.to(device)
         else: # if mil
             encoder = timm.create_model(**cfg['encoder_kwargs'])
-            num_features = encoder.fc.in_features
-            encoder.fc = nn.Identity()
+            num_features = list(encoder.children())[-1].in_features #num_features = encoder.fc.in_features
+            #encoder.fc = nn.Identity()
+            encoder = nn.Sequential(*list(encoder.children())[:-1])
             num_pars_encoder = num_parameters(encoder)
             model = MILNet(encoder, num_features=num_features, **cfg['net_kwargs'])
             model = model.to(device)
-            if cfg['pretrain']:
+            if cfg['pretrain_enc']:
                 # load pretrained encoder
                 checkpoint = torch.load(cfg['pretrained_model_dir']+f'/model_fold{i+1}.ckpt', weights_only=False)['model_state_dict']
-                del checkpoint['fc.weight'] # remove fc
-                del checkpoint['fc.bias']
+                checkpoint = OrderedDict(zip(encoder.state_dict().keys(),list(checkpoint.values())[:-2])) # remove last fc weight and bias
                 model.encoder.load_state_dict(checkpoint) # load weights
+            if cfg['pretrain_fc']:
                 # load pretrained fc layer
                 checkpoint = torch.load(cfg['pretrained_model_dir']+f'/model_fold{i+1}.ckpt', weights_only=False)['model_state_dict']
                 with torch.no_grad():
-                    model.fc[1].weight.copy_(checkpoint['fc.weight'])
-                    model.fc[1].bias.copy_(checkpoint['fc.bias'])
+                    model.fc[1].weight.copy_(list(checkpoint.items())[-2][1])
+                    model.fc[1].bias.copy_(list(checkpoint.items())[-1][1])
             if cfg['freeze_enc']:
                 # Freezing Encoder
                 for param in model.encoder.parameters():
@@ -300,6 +304,8 @@ def main(cfg):
         val_f1_ls = []
         train_pred_ls = []
         val_pred_ls = []
+        train_true_ls = []
+        val_true_ls = []
         best_loss = 100
         criterion = nn.CrossEntropyLoss()
 
@@ -323,6 +329,7 @@ def main(cfg):
             #train_prcauc_ls.append(train_metrics['prc_auc'])
             train_f1_ls.append(train_metrics['f1score'])
             train_pred_ls.append(train_metrics['y_pred'])
+            train_true_ls.append(train_metrics['y_true'])
             print(f"[TRAIN] BCE loss: {train_loss:0.4f} | Acc: {100*train_metrics['accuracy']:0.2f}%") if verbose else None
 
             # evaluate
@@ -339,29 +346,25 @@ def main(cfg):
             #val_prcauc_ls.append(val_metrics['prc_auc'])
             val_f1_ls.append(val_metrics['f1score'])
             val_pred_ls.append(val_metrics['y_pred'])
+            val_true_ls.append(val_metrics['y_true'])
             
             print(f"[VALID] BCE loss: {val_loss:0.4f} | Acc: {100*val_metrics['accuracy']:0.2f}%") if verbose else None
             print() if verbose else None
             if not verbose and (epoch % int(epochs*.25) == 0):
                 print(f"Epoch {epoch}/{epochs}")
+                
 
         print("Finished Training.")
         time_elapsed = time.time() - since
         print(f'Training complete in {time_elapsed // 60:.0f}m {time_elapsed % 60:.0f}s')
         torch.save({'epoch':epoch, 
                     'model_state_dict':model.state_dict(), 
-                    'optimizer_state_dict':optimizer.state_dict(),
+                    #'optimizer_state_dict':optimizer.state_dict(),
                     'loss':val_loss, 
                     'metrics':val_metrics}, 
                     cfg['save_dir']+f'/model_fold{i+1}.ckpt')
         checkpoint = torch.load(cfg['save_dir']+f'/model_fold{i+1}.ckpt', weights_only=False)
-        model.load_state_dict(checkpoint['model_state_dict'])
-        optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
-        print(f"Best Validation Epoch: {checkpoint['epoch']},\n\tLoss: {checkpoint['loss']:.4f},\n\tAccuracy: {checkpoint['metrics']['accuracy']*100:.2f}")
-        #tn, fp, fn, tp = checkpoint['metrics']['conf_mat'].ravel()
-        #print("Confusion Matrix:\n\t\tActual Healthy  |  Actual Unhealthy")
-        #print(f"Pred Healthy   | \t{tp}\t|\t{fp}")
-        #print(f"Pred Unhealthy | \t{fn}\t|\t{tn}")
+        print(f"Best Validation Epoch: {checkpoint['epoch']},\n\tLoss: {checkpoint['loss']:.4f},\n\tAccuracy: {checkpoint['metrics']['accuracy']*100:.2f},\n\tAUROC: {checkpoint['metrics']['roc_auc']*100:.2f}")
 
         # Metrics excel file
         metrics_df = pd.DataFrame({'Epoch':range(0,epochs), 
@@ -373,9 +376,12 @@ def main(cfg):
                                    'Training F1 Score':train_f1_ls, 'Validation F1 Score':val_f1_ls,
                                    'Training ROCAUC':train_rocauc_ls, 'Validation ROCAUC':val_rocauc_ls,
                                    #'Training PRCAUC':train_prcauc_ls, 'Validation PRCAUC':val_prcauc_ls,
-                                   'Training Pred':train_pred_ls, 'Validation Pred':val_pred_ls,
                                   })
         metrics_df.to_csv(cfg['save_dir']+f'/metrics_fold{i+1}.csv')
+        # Predictions at last epoch csv file
+        preds_df = pd.DataFrame(val_pred_ls[-1])
+        preds_df['Validation True'] = val_true_ls[-1]
+        preds_df.to_csv(cfg['save_dir']+f'/preds_fold{i+1}.csv')
 
 
 

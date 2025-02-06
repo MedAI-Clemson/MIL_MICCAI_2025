@@ -189,28 +189,34 @@ class MILMRI(Dataset):
             self.data.to_csv(save_dir)
 
     def __len__(self):
-        return len(self.data)
+        return len(self.data.drop_duplicates(subset=['ProxID'])) # by patient
+        #return len(self.data) # by series
 
     def __getitem__(self, idx):
-        series_name = self.data['SeriesUID'].iloc[idx]
+        #series_name = self.data['SeriesUID'].iloc[idx] # by series
+        series_names = self.data.loc[self.data['ProxID'].isin(self.data.drop_duplicates(subset=['ProxID']).iloc[idx])]['SeriesUID'] # by patient
         
         # read and group images with study
         # Read the DICOM object using pydicom.
-        path = self.data_path+series_name
-        files = os.listdir(path)
         study_imgs = []
-        for i,file in enumerate(files):
-            if '.dcm' in file:
-                dicom = pydicom.dcmread(path+'/'+file)
-                pixels = dicom.pixel_array
-                img = torch.tensor(pixels,dtype=torch.uint8).unsqueeze(0)
-                if self.transforms:
-                    img = self.transforms(img)
-                study_imgs.append(img)
+        for i,series_name in enumerate(series_names):
+            path = self.data_path+series_name
+            files = os.listdir(path)
+            for i,file in enumerate(files):
+                if '.dcm' in file:
+                    dicom = pydicom.dcmread(path+'/'+file)
+                    pixels = dicom.pixel_array
+                    img = torch.tensor(pixels,dtype=torch.uint8).unsqueeze(0)
+                    if self.transforms:
+                        img = self.transforms(img)
+                    study_imgs.append(img)
         study = torch.concat(study_imgs)
-        label = self.data['ClinSig'].iloc[idx]
+        #label = self.data['ClinSig'].iloc[idx] # by series
+        #name = series_name # by series
+        label = self.data.drop_duplicates(subset=['ProxID']).iloc[idx]['ClinSig']
+        name = self.data.drop_duplicates(subset=['ProxID']).iloc[idx]['ProxID']
         record = {
-            "name": series_name,
+            "name": name,
             "study": study,
             "label": label
         }
@@ -271,10 +277,14 @@ class MRI(Dataset):
     
         
 class MILCT(Dataset):
-    def __init__(self, data, data_path=None, transforms=None, view_filter=None):
+    def __init__(self, data, data_path=None, transforms=None, view_filter=None, save_dir=None):
         self.data = data
         self.data_path = data_path
         self.transforms = transforms
+        self.data.loc[self.data['Diagnosis']==2,'Diagnosis'] = 1 # changing to binary classification 2's become 1's (metastatic and normal malignant)
+        
+        if save_dir is not None:
+            self.data.to_csv(save_dir)
 
     def __len__(self):
         return len(self.data)
@@ -307,10 +317,11 @@ class MILCT(Dataset):
     
     
 class CT(Dataset):
-    def __init__(self, data, data_path=None, transforms=None, view_filter=None):
+    def __init__(self, data, data_path=None, transforms=None, view_filter=None, save_dir=None):
         self.data = data
         self.data_path = data_path
         self.transforms = transforms
+        self.data.loc[self.data['Diagnosis']==2,'Diagnosis'] = 1 # changing to binary classification 2's become 1's (metastatic and normal malignant)
         
         # Creating instance level dataframe
         temp_df = pd.DataFrame()
@@ -326,6 +337,9 @@ class CT(Dataset):
         slice_id = num_ls.flatten()
         self.data = temp_df
         self.data['sliceid'] = slice_id
+        
+        if save_dir is not None:
+            self.data.to_csv(save_dir)
         
     def __len__(self):
         return len(self.data)

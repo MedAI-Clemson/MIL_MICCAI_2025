@@ -28,7 +28,7 @@ from sklearn.model_selection import StratifiedKFold
 
 # Local
 from utils import pad, num_parameters, EarlyStopper, custom_collate
-from datasets import MILMRI, MRI
+from datasets import MILCT, CT
 from models import MILNet
 import transforms
 
@@ -72,9 +72,9 @@ def train_one_epoch_mil(model, optimizer, scheduler, train_loader, criterion, de
     output_ls = []
     losses = []
     for i, batch in enumerate(train_loader):
-        inputs = batch['study'].to(device).type(torch.float32).unsqueeze(1)
+        inputs = batch['study'].to(device).float().unsqueeze(1)
         num_imgs = batch['num_imgs']
-        targets = batch['label'].to(device).type(torch.float32)
+        targets = batch['label'].to(device).float()
         target_ls.append(targets.cpu().detach().numpy())
         #print(inputs.shape)
         #print(targets.shape)
@@ -109,7 +109,7 @@ def train_one_epoch(model, optimizer, scheduler, train_loader, criterion, device
     for i, batch in enumerate(train_loader):
         inputs,targets = batch
         inputs = inputs.to(device).float()
-        targets = targets.to(device).type(torch.float32)
+        targets = targets.to(device).float()
         outputs = model(inputs)
         output_ls.append(outputs.cpu().detach().numpy())
         target_ls.append(targets.cpu().detach().numpy())
@@ -134,9 +134,9 @@ def evaluate_mil(model, test_loader, criterion, device):
     output_ls = []
     losses = []
     for i, batch in enumerate(test_loader):
-        inputs = batch['study'].to(device).type(torch.float32).unsqueeze(1)
+        inputs = batch['study'].to(device).float().unsqueeze(1)
         num_imgs = batch['num_imgs']
-        targets = batch['label'].to(device).type(torch.float32)
+        targets = batch['label'].to(device).float()
         target_ls.append(targets.cpu().numpy())
         
         with torch.no_grad():
@@ -161,7 +161,7 @@ def evaluate(model, test_loader, criterion, device):
     for i, batch in enumerate(test_loader):
         inputs,targets = batch
         inputs = inputs.to(device).float()
-        targets = targets.to(device).type(torch.float32)
+        targets = targets.to(device).float()
         target_ls.append(targets.cpu().numpy())
         
         with torch.no_grad():
@@ -180,7 +180,7 @@ def compute_metrics_bin(y_true, y_pred):
     y_pred = 1/(1+np.exp(-y_pred)) #sigmoid to get probability 0-1
     y_pred_cls = np.rint(y_pred)
     
-    mets['roc_auc'] = skmet.roc_auc_score(y_true, y_pred, multi_class='ovr')
+    mets['roc_auc'] = skmet.roc_auc_score(y_true, y_pred)
     mets['conf_mat'] = skmet.confusion_matrix(y_true, y_pred_cls)
     mets['accuracy'] = skmet.accuracy_score(y_true, y_pred_cls)
     mets['precision'] = skmet.precision_score(y_true, y_pred_cls,zero_division=0)
@@ -221,17 +221,11 @@ def main(cfg):
         
     # Read in metadata file
     imgs_df = pd.read_csv(cfg['metadata_csv'])
-    # balancing
-    if cfg['balance'] != 0:
-        healthy_df = imgs_df[imgs_df['ClinSig'] == 0]
-        unhealthy_df = imgs_df[imgs_df['ClinSig'] == 1]
-        healthy_df = healthy_df.loc[healthy_df['ProxID'].isin(healthy_df['ProxID'].drop_duplicates().sample(frac=cfg['balance'],random_state=123, ignore_index=True))]
-        imgs_df = pd.concat([healthy_df,unhealthy_df])
     
     # Cross Validation
     skf = StratifiedKFold(n_splits=cfg['folds'], shuffle=True, random_state=123)
-    patient_df = imgs_df.drop_duplicates(subset=['ProxID'], ignore_index=True, keep='last')
-    for i, (train_index, val_index) in enumerate(skf.split(patient_df['ProxID'], patient_df['ClinSig'])):
+    patient_df = imgs_df.drop_duplicates(subset=['PatientID'], ignore_index=True, keep='last')
+    for i, (train_index, val_index) in enumerate(skf.split(patient_df['PatientID'], patient_df['Diagnosis'])):
 
         print(f"----------\nFOLD {i+1}:\n----------")
         
@@ -269,18 +263,17 @@ def main(cfg):
         num_pars = num_parameters(model)
 
         # Datasets
-        train_patients = patient_df.iloc[train_index]['ProxID']
-        val_patients = patient_df.iloc[val_index]['ProxID']
-        train_df = imgs_df.loc[imgs_df['ProxID'].isin(train_patients)]
-        val_df = imgs_df.loc[imgs_df['ProxID'].isin(val_patients)]
-        view_filter = cfg['view_filter'] #['t2_tse_cor','t2_tse_sag','t2_tse_tra']
+        train_patients = patient_df.iloc[train_index]['PatientID']
+        val_patients = patient_df.iloc[val_index]['PatientID']
+        train_df = imgs_df.loc[imgs_df['PatientID'].isin(train_patients)]
+        val_df = imgs_df.loc[imgs_df['PatientID'].isin(val_patients)]
         if cfg['mil']:
-            train_dataset = MILMRI(train_df, data_path=cfg['data_dir'], transforms=transforms.transform_augment, view_filter=view_filter, save_dir=cfg['save_dir']+f'/train_fold{i+1}.csv')
-            val_dataset = MILMRI(val_df, data_path=cfg['data_dir'], transforms=transforms.transform_original, view_filter=view_filter, save_dir=cfg['save_dir']+f'/val_fold{i+1}.csv')
+            train_dataset = MILCT(train_df, data_path=cfg['data_dir'], transforms=transforms.transform_augment, save_dir=cfg['save_dir']+f'/train_fold{i+1}.csv')
+            val_dataset = MILCT(val_df, data_path=cfg['data_dir'], transforms=transforms.transform_original, save_dir=cfg['save_dir']+f'/val_fold{i+1}.csv')
             collate_fn = custom_collate
         else:
-            train_dataset = MRI(train_df, data_path=cfg['data_dir'], transforms=transforms.transform_augment, view_filter=view_filter, save_dir=cfg['save_dir']+f'/train_fold{i+1}.csv')
-            val_dataset = MRI(val_df, data_path=cfg['data_dir'], transforms=transforms.transform_original, view_filter=view_filter, save_dir=cfg['save_dir']+f'/val_fold{i+1}.csv')
+            train_dataset = CT(train_df, data_path=cfg['data_dir'], transforms=transforms.transform_augment, save_dir=cfg['save_dir']+f'/train_fold{i+1}.csv')
+            val_dataset = CT(val_df, data_path=cfg['data_dir'], transforms=transforms.transform_original, save_dir=cfg['save_dir']+f'/val_fold{i+1}.csv')
             collate_fn = default_collate
         
         # Dataloaders
@@ -383,7 +376,8 @@ def main(cfg):
                                   })
         metrics_df.to_csv(cfg['save_dir']+f'/metrics_fold{i+1}.csv')
         # Predictions at last epoch csv file
-        preds_df = pd.DataFrame({'Validation Pred':val_pred_ls[-1].squeeze(), 'Validation True':val_true_ls[-1].squeeze()})
+        preds_df = pd.DataFrame(val_pred_ls[-1])
+        preds_df['Validation True'] = val_true_ls[-1]
         preds_df.to_csv(cfg['save_dir']+f'/preds_fold{i+1}.csv')
 
 
